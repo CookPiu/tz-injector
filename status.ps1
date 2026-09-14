@@ -15,13 +15,20 @@ Write-Host ("Default TZ: {0}" -f $cfg.timeZone)
 Write-Host ''
 Write-Host ('{0,-14} {1,-9} {2,-24} {3,-24} {4}' -f 'App', 'Pid', 'Wanted', 'Actual', 'State')
 foreach ($app in $cfg.apps) {
-  $wanted = if ($app.timeZone) { $app.timeZone } else { $cfg.timeZone }
+  $wanted = if ($app.timeZone -eq 'none') { $null } elseif ($app.timeZone) { $app.timeZone } else { $cfg.timeZone }
+  $wantedText = if ($wanted) { $wanted } else { '(args only)' }
   $mains = @(Get-CimInstance Win32_Process -Filter "Name='$($app.name)'" | Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ExecutablePath -like $app.pathLike })
-  if ($mains.Count -eq 0) { Write-Host ('{0,-14} {1,-9} {2,-24} {3,-24} {4}' -f $app.name, '-', $wanted, '-', 'not running'); continue }
+  if ($mains.Count -eq 0) { Write-Host ('{0,-14} {1,-9} {2,-24} {3,-24} {4}' -f $app.name, '-', $wantedText, '-', 'not running'); continue }
   foreach ($m in $mains) {
-    try { $actual = [ProcEnv]::GetVar([int]$m.ProcessId, 'TZ') } catch { $actual = "? ($($_.Exception.Message))" }
-    $state = if ($actual -eq $wanted) { 'ok' } elseif ($null -eq $actual) { 'no TZ (started before install; restart it)' } else { 'mismatch' }
-    Write-Host ('{0,-14} {1,-9} {2,-24} {3,-24} {4}' -f $app.name, $m.ProcessId, $wanted, ($actual ?? '(none)'), $state)
+    $actual = $null
+    if ($wanted) { try { $actual = [ProcEnv]::GetVar([int]$m.ProcessId, 'TZ') } catch { $actual = "? ($($_.Exception.Message))" } }
+    $missing = @(); if ($app.args) { $missing = @($app.args | Where-Object { $m.CommandLine -notmatch ('(^|\s)' + [regex]::Escape($_) + '(\s|$)') }) }
+    $problems = @()
+    if ($wanted -and $actual -ne $wanted) { $problems += $(if ($null -eq $actual) { 'no TZ' } else { 'TZ mismatch' }) }
+    if ($missing.Count) { $problems += "missing $($missing -join ' ')" }
+    $state = if ($problems.Count -eq 0) { 'ok' } else { ($problems -join ', ') + ' (started before the watchdog; restart it)' }
+    $actualText = if ($wanted) { $actual ?? '(none)' } else { '-' }
+    Write-Host ('{0,-14} {1,-9} {2,-24} {3,-24} {4}' -f $app.name, $m.ProcessId, $wantedText, $actualText, $state)
   }
 }
 $log = Join-Path $here 'watchdog.log'

@@ -71,10 +71,18 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -TimeZone America/Lo
 - `timeZone`：所有应用的默认 IANA 时区。
 - `apps[].name`：进程映像名。
 - `apps[].pathLike`：可执行文件路径通配，避免误伤同名进程（Claude Desktop 自带的 CLI 也叫 `claude.exe`），包升级后路径变化也不受影响。
-- `apps[].timeZone`：可选，按应用单独指定。
-- `maxAgeSeconds`：运行超过这个秒数的进程绝不重启。
+- `apps[].timeZone`：可选，按应用单独指定；写 `"none"` 表示该应用不注入 `TZ`（配合 `args` 使用）。
+- `apps[].args`：进程命令行必须带的开关；主进程缺少任一开关就会被追加后重启。
+- `apps[].closeGracefully`：先关闭主窗口并最多等 3 秒再强杀，让应用保存会话，下次不弹“恢复页面”。浏览器用它；关窗即缩到托盘的应用不要开。
+- `apps[].killIfNoWindow`：没有窗口的进程（后台常驻的浏览器、启动增强实例）不受年龄限制，随时可替换，它没有未保存的工作。
+- `apps[].noWindowArgs`：替换无窗口实例时追加的参数，让它回来时仍不开窗口。
+- `maxAgeSeconds`：带窗口且运行超过这个秒数的进程绝不重启。
 
 任何 Electron 应用都可以加进来。非 Electron 应用只有自己读 `TZ` 的才有效（Node.js 认，Python、.NET、Win32 不认）。
+
+### 示例：去掉 Edge 的“已开始调试此浏览器”提示条
+
+使用 `chrome.debugger` 的扩展（包括时区伪装类）会让 Edge 和 Chrome 在每个受影响的标签页顶部显示这条提示。唯一的隐藏办法是 `--silent-debugger-extension-api` 开关，而且每次启动都得带上，包括从链接和启动增强起来的实例。上面的 `msedge.exe` 条目就是做这件事：不带开关启动的 Edge 会在两秒内被优雅关闭并带开关重开，无窗口的后台实例则被静默替换。Chrome 同理，把名称和路径换成 `chrome.exe` 即可。
 
 ## 边界
 

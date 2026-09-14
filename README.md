@@ -65,7 +65,16 @@ Remove everything:
   "maxAgeSeconds": 20,
   "apps": [
     { "name": "claude.exe",  "pathLike": "*\\WindowsApps\\Claude_*\\app\\claude.exe" },
-    { "name": "ChatGPT.exe", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London" }
+    { "name": "ChatGPT.exe", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London" },
+    {
+      "name": "msedge.exe",
+      "pathLike": "*\\Microsoft\\Edge\\Application\\msedge.exe",
+      "timeZone": "none",
+      "args": ["--silent-debugger-extension-api"],
+      "closeGracefully": true,
+      "killIfNoWindow": true,
+      "noWindowArgs": ["--no-startup-window"]
+    }
   ]
 }
 ```
@@ -73,10 +82,18 @@ Remove everything:
 - `timeZone` — default IANA zone for all apps.
 - `apps[].name` — process image name.
 - `apps[].pathLike` — wildcard on the executable path; keeps the watchdog away from unrelated processes with the same name (Claude Desktop, for example, also ships a `claude.exe` CLI) and survives package upgrades.
-- `apps[].timeZone` — optional per-app override.
-- `maxAgeSeconds` — a process older than this is never relaunched.
+- `apps[].timeZone` — optional per-app override; `"none"` disables `TZ` injection for that app (use with `args`).
+- `apps[].args` — command-line switches the process must carry; a main process missing any of them is relaunched with them appended.
+- `apps[].closeGracefully` — close the main window and wait up to 3 s before killing, so the app saves its session and does not offer to "restore pages" next time. Use for browsers; leave off for apps that hide to the tray on close.
+- `apps[].killIfNoWindow` — a process without a window (a browser kept alive in the background, startup boost) may be relaunched at any age; it holds no unsaved work.
+- `apps[].noWindowArgs` — appended when a windowless instance is relaunched, so it comes back without opening a window.
+- `maxAgeSeconds` — a process with a window older than this is never relaunched.
 
 Any Electron app can be added. Non-Electron apps only benefit if they read `TZ` themselves (Node.js does; Python, .NET and Win32 do not).
+
+### Example: silence the extension-debugging bar in Edge
+
+Extensions that use `chrome.debugger` (time zone spoofers among them) make Edge and Chrome show "started debugging this browser" on every affected tab. The only way to hide it is the `--silent-debugger-extension-api` switch, which has to be on the browser's command line for every launch, including launches from links and from startup boost. The `msedge.exe` entry above does exactly that: an Edge started without the switch is closed gracefully within two seconds and reopened with it; a windowless background instance is replaced silently. The same works for Chrome with `chrome.exe` and its path.
 
 ## What it does not cover
 

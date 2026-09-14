@@ -45,7 +45,7 @@ if ($TimeZone) {
 } else {
   Test-IanaTimeZone $cfg.timeZone
 }
-foreach ($app in $cfg.apps) { if ($app.timeZone) { Test-IanaTimeZone $app.timeZone } }
+foreach ($app in $cfg.apps) { if ($app.timeZone -and $app.timeZone -ne 'none') { Test-IanaTimeZone $app.timeZone } }
 
 # stop any running watchdog so the new one owns the mutex
 Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -match 'tz-injector\.ps1' } | ForEach-Object {
@@ -80,6 +80,7 @@ Write-Host "Log: $(Join-Path $here 'watchdog.log')"
 
 if ($RestartAppsNow) {
   foreach ($app in $cfg.apps) {
+    if ($app.timeZone -eq 'none') { continue }   # args-only apps (browsers) are not restarted here
     $wanted = if ($app.timeZone) { $app.timeZone } else { $cfg.timeZone }
     $mains = Get-CimInstance Win32_Process -Filter "Name='$($app.name)'" | Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ExecutablePath -like $app.pathLike }
     foreach ($m in $mains) {
@@ -87,6 +88,7 @@ if ($RestartAppsNow) {
       Start-Sleep 1
       $si = New-Object System.Diagnostics.ProcessStartInfo
       $si.FileName = $m.ExecutablePath; $si.WorkingDirectory = Split-Path $m.ExecutablePath; $si.UseShellExecute = $false
+      $si.Arguments = (@($app.args) -join ' ')
       $si.EnvironmentVariables['TZ'] = $wanted
       [System.Diagnostics.Process]::Start($si) | Out-Null
       Write-Host "Restarted $($app.name) with TZ=$wanted"

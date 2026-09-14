@@ -10,7 +10,15 @@
     {
       "name": "ChatGPT.exe",
       "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe"
+    },
+    {
+      "name": "msedge.exe",
+      "pathLike": "*\\Microsoft\\Edge\\Application\\msedge.exe",
+      "timeZone": "none",
+      "args": ["--silent-debugger-extension-api"],
+      "closeGracefully": true,
+      "killIfNoWindow": true,
+      "noWindowArgs": ["--no-startup-window"]
     }
   ]
 }
-
