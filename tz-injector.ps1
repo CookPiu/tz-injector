@@ -1,21 +1,19 @@
 <#
 .SYNOPSIS
-  Watchdog that makes selected Windows desktop apps (Electron-based, e.g. Claude Desktop and
-  ChatGPT) always run with a process-level TZ environment variable, without changing the
-  system time zone.
+  Watchdog that keeps Claude Desktop and ChatGPT (or any other Electron app listed in config.json)
+  running with a process-level TZ environment variable, without changing the system time zone.
 .DESCRIPTION
   Every pollMs milliseconds the main process of each configured app is inspected (the one whose
-  command line has no --type= switch). The TZ variable is read straight from the target
-  process's environment block (PEB -> RTL_USER_PROCESS_PARAMETERS -> Environment):
+  command line has no --type= switch). TZ is read straight from the target process's environment
+  block (PEB -> RTL_USER_PROCESS_PARAMETERS -> Environment):
     - TZ already equals the wanted zone: leave it alone.
-    - TZ missing or different and the process is younger than maxAgeSeconds: kill the whole
-      process tree and start the app again with the original command-line arguments plus TZ.
-    - TZ missing but the process is older (it was running before the watchdog started): log
-      only, never kill work in progress.
+    - TZ missing or different and the process is younger than maxAgeSeconds: kill the process tree
+      and start the app again with the original command-line arguments plus TZ.
+    - TZ missing or different but the process is older: log only. An app that was already running
+      is never killed.
   Per app at most 3 relaunches per 60 s; above that the app is left alone for 5 minutes.
-  config.json is re-read whenever its modification time changes, so a time zone change takes
-  effect without restarting the watchdog.
-  Registered as a hidden logon task by install.ps1.
+  config.json is re-read whenever its modification time changes.
+  Registered as a hidden scheduled task by install.ps1.
 #>
 [CmdletBinding()]
 param(
@@ -111,21 +109,9 @@ function Get-AppConfig($cfg, [string]$procName) {
   $cfg.apps | Where-Object { $_.name -ieq $procName } | Select-Object -First 1
 }
 
-# Wanted TZ for an app; $null when the app is configured with "timeZone": "none" (args only).
 function Get-WantedTz($cfg, $app) {
-  if ($app.timeZone -eq 'none') { return $null }
   if ($app.timeZone) { return [string]$app.timeZone }
   return [string]$cfg.timeZone
-}
-
-# Command-line switches from "args" that the process is missing.
-function Get-MissingArgs($app, [string]$commandLine) {
-  if (-not $app.args) { return @() }
-  @($app.args | Where-Object { $commandLine -notmatch ('(^|\s)' + [regex]::Escape($_) + '(\s|$)') })
-}
-
-function Test-HasWindow([int]$procId) {
-  try { return ((Get-Process -Id $procId -ErrorAction Stop).MainWindowHandle -ne [IntPtr]::Zero) } catch { return $true }
 }
 
 function Get-MainProcesses($cfg) {
@@ -138,33 +124,19 @@ function Get-MainProcesses($cfg) {
   }
 }
 
-function Relaunch($proc, $app, [string]$tz, [string[]]$missingArgs) {
+function Relaunch($proc, [string]$tz) {
   $args = Get-ArgsFromCommandLine $proc.CommandLine
-  if ($missingArgs.Count -gt 0) { $args = (@($args, ($missingArgs -join ' ')) | Where-Object { $_ }) -join ' ' }
-  # a windowless (background) instance must come back windowless, e.g. Edge needs --no-startup-window
-  if ($app.noWindowArgs -and -not (Test-HasWindow $proc.ProcessId)) {
-    $extra = @($app.noWindowArgs | Where-Object { $args -notmatch ('(^|\s)' + [regex]::Escape($_) + '(\s|$)') })
-    if ($extra.Count) { $args = (@($args, ($extra -join ' ')) | Where-Object { $_ }) -join ' ' }
-  }
   $exe = $proc.ExecutablePath
-  $closed = $false
-  if ($app.closeGracefully) {
-    # ask the window to close so the app saves its session and does not report a crash next time
-    try {
-      $gp = Get-Process -Id $proc.ProcessId -ErrorAction Stop
-      if ($gp.MainWindowHandle -ne [IntPtr]::Zero -and $gp.CloseMainWindow()) { $closed = $gp.WaitForExit(3000) }
-    } catch {}
-  }
-  if (-not $closed) { & $taskkill /PID $proc.ProcessId /T /F 2>&1 | Out-Null }
+  & $taskkill /PID $proc.ProcessId /T /F 2>&1 | Out-Null
   Start-Sleep -Milliseconds 800
   $si = New-Object System.Diagnostics.ProcessStartInfo
   $si.FileName = $exe
   $si.WorkingDirectory = Split-Path -Parent $exe
   $si.UseShellExecute = $false
   $si.Arguments = $args
-  if ($tz) { $si.EnvironmentVariables['TZ'] = $tz }
+  $si.EnvironmentVariables['TZ'] = $tz
   $np = [System.Diagnostics.Process]::Start($si)
-  Log ("relaunched {0}: pid {1} -> {2} ({3}), args [{4}], TZ={5}" -f $proc.Name, $proc.ProcessId, $np.Id, $(if ($closed) { 'closed gracefully' } else { 'killed' }), $args, $(if ($tz) { $tz } else { '(none)' }))
+  Log ("relaunched {0}: pid {1} -> {2}, args [{3}], TZ={4}" -f $proc.Name, $proc.ProcessId, $np.Id, $args, $tz)
 }
 
 $cfg = Read-Config
@@ -172,7 +144,7 @@ $cfgStamp = (Get-Item -LiteralPath $ConfigPath).LastWriteTimeUtc
 $seen = @{}          # pid -> 'ok' | 'skip' | 'relaunched'
 $relaunches = @{}    # app name -> datetime[]
 $pausedUntil = @{}   # app name -> datetime
-Log ("watchdog started: TZ={0}, apps={1}" -f $cfg.timeZone, (($cfg.apps | ForEach-Object { $_.name + $(if ($_.timeZone) { "(tz=$($_.timeZone))" }) + $(if ($_.args) { "(args=$($_.args -join ' '))" }) }) -join ', '))
+Log ("watchdog started: TZ={0}, apps={1}" -f $cfg.timeZone, (($cfg.apps | ForEach-Object { $_.name + $(if ($_.timeZone) { "($($_.timeZone))" }) }) -join ', '))
 
 while ($true) {
   try {
@@ -195,25 +167,19 @@ while ($true) {
       $app = Get-AppConfig $cfg $p.Name
       $wanted = Get-WantedTz $cfg $app
       $age = ($now - $p.CreationDate).TotalSeconds
-      # a process that has just been created may still be a single-instance forwarder about to exit,
-      # and its environment block may not be readable yet; wait 2 s before judging it
+      # a process younger than 2 s may be a single-instance forwarder about to exit, and its
+      # environment block may not be readable yet
       if ($age -lt 2) { continue }
       $tz = $null
-      if ($wanted) {
-        try { $tz = [ProcEnv]::GetVar([int]$p.ProcessId, 'TZ') }
-        catch {
-          if ($age -lt 5) { continue }
-          Log ("cannot read environment of {0} pid {1}: {2}; skipped" -f $p.Name, $p.ProcessId, $_.Exception.Message)
-          $seen[$p.ProcessId] = 'skip'; continue
-        }
+      try { $tz = [ProcEnv]::GetVar([int]$p.ProcessId, 'TZ') }
+      catch {
+        if ($age -lt 5) { continue }
+        Log ("cannot read environment of {0} pid {1}: {2}; skipped" -f $p.Name, $p.ProcessId, $_.Exception.Message)
+        $seen[$p.ProcessId] = 'skip'; continue
       }
-      $missing = @(Get-MissingArgs $app $p.CommandLine)
-      $tzOk = (-not $wanted) -or ($tz -eq $wanted)
-      if ($tzOk -and $missing.Count -eq 0) { $seen[$p.ProcessId] = 'ok'; continue }
-      $reason = (@($(if (-not $tzOk) { "TZ=[$tz]" }), $(if ($missing.Count) { "missing " + ($missing -join ' ') })) | Where-Object { $_ }) -join ', '
-      # an old process is only relaunched when the app allows it for windowless (background) instances
-      if ($age -gt $cfg.maxAgeSeconds -and -not ($app.killIfNoWindow -and -not (Test-HasWindow $p.ProcessId))) {
-        Log ("{0} pid {1}: {2}, but it is {3:N0} s old; left alone to protect unsaved work" -f $p.Name, $p.ProcessId, $reason, $age)
+      if ($tz -eq $wanted) { $seen[$p.ProcessId] = 'ok'; continue }
+      if ($age -gt $cfg.maxAgeSeconds) {
+        Log ("{0} pid {1} has TZ=[{2}] but is {3:N0} s old; left alone to protect unsaved work" -f $p.Name, $p.ProcessId, $tz, $age)
         $seen[$p.ProcessId] = 'skip'; continue
       }
       if ($pausedUntil.ContainsKey($p.Name) -and $now -lt $pausedUntil[$p.Name]) {
@@ -227,7 +193,7 @@ while ($true) {
       }
       $seen[$p.ProcessId] = 'relaunched'
       $relaunches[$p.Name] = $hist + $now
-      try { Relaunch $p $app $wanted $missing } catch { Log ("relaunch of {0} failed: {1}" -f $p.Name, $_.Exception.Message) }
+      try { Relaunch $p $wanted } catch { Log ("relaunch of {0} failed: {1}" -f $p.Name, $_.Exception.Message) }
     }
     foreach ($k in @($seen.Keys)) { if (-not $alive.ContainsKey($k)) { $seen.Remove($k) } }
   } catch {

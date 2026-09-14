@@ -1,6 +1,6 @@
-# Remove the logon task and stop the watchdog. Running apps are not touched.
+# Remove the scheduled tasks and stop the watchdog. Running apps are not touched.
 $ErrorActionPreference = 'Continue'
-foreach ($name in @('TZ Injector', 'TZ Injector (Claude, ChatGPT)')) {
+foreach ($name in @('TZ Injector', 'TZ Injector - launch apps', 'TZ Injector (Claude, ChatGPT)')) {
   if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $name -Confirm:$false

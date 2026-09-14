@@ -1,8 +1,8 @@
 # tz-injector
 
-Run selected Windows desktop apps in a time zone of your choice without changing the system time zone.
+Run Claude Desktop and ChatGPT for Windows in a time zone of your choice, without changing the system time zone.
 
-`tz-injector` is a small PowerShell watchdog for Windows 10/11. It makes sure that configured apps always start with a process-level `TZ` environment variable, no matter how they are launched: Start menu, taskbar, Store tile, protocol links (`claude://`, ...) or "restart apps after sign-in". Electron-based apps such as **Claude Desktop** and **ChatGPT** apply `TZ` to their main process and to every renderer, so the pages inside them see the chosen zone in `Intl.DateTimeFormat`, `Date` and everything built on them, while the rest of Windows keeps the real time zone.
+`tz-injector` is a small PowerShell watchdog for Windows 10/11. It makes sure the two apps always start with a process-level `TZ` environment variable, no matter how they are launched: Start menu, taskbar, Store tile, protocol links (`claude://`, ...) or "restart apps after sign-in". Both are Electron apps, and Electron applies `TZ` to its main process and to every renderer, so the pages inside them see the chosen zone in `Intl.DateTimeFormat`, `Date` and everything built on them, while the rest of Windows keeps the real time zone. Any other Electron app can be added to the configuration.
 
 [中文说明](README.zh-CN.md)
 
@@ -18,7 +18,7 @@ The watchdog polls the main process of each configured app (the one without a `-
 
 At most 3 relaunches per app per minute; after that the app is left alone for 5 minutes. The only visible effect is a short flicker (about one second) the first time an app is launched by other means. `config.json` is reloaded automatically when it changes.
 
-Verified on Windows 11 with the Microsoft Store builds of Claude Desktop (Electron 44) and ChatGPT, and with Obsidian. The mechanism is Electron's: on Windows it applies `TZ` to all of its processes. Plain Chromium browsers (Edge, Chrome) ignore `TZ`; for those use a `chrome.debugger` extension instead.
+Verified on Windows 11 with the Microsoft Store builds of Claude Desktop (Electron 44) and ChatGPT. Plain Chromium browsers (Edge, Chrome) ignore `TZ`; for those use a `chrome.debugger` extension instead.
 
 ## Requirements
 
@@ -34,24 +34,26 @@ cd tz-injector
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -TimeZone America/Los_Angeles
 ```
 
-`install.ps1` validates the zone against the IANA database, writes it to `config.json`, registers a hidden scheduled task for the current user (runs at logon and re-checks every 10 minutes; a mutex keeps it single-instance) and starts the watchdog immediately. Apps that are already running are not touched; add `-RestartAppsNow` to restart them with the new zone (this kills their process trees, save your work first).
+`install.ps1` validates the zone against the IANA database, writes it to `config.json`, registers a hidden scheduled task for the current user and starts the watchdog immediately. Apps that are already running are not touched; add `-RestartAppsNow` to restart them with the new zone (this kills their process trees, save your work first).
 
-Change the zone later with the same command:
+Options:
+
+| Switch | Effect |
+| --- | --- |
+| `-TimeZone <IANA name>` | set the zone; Windows ids such as `Pacific Standard Time` are rejected with the matching IANA name |
+| `-StartAtLogon:$false` | register the task without triggers; the watchdog then runs only when you call `start.ps1` (default: starts at logon and re-checks every 10 minutes) |
+| `-LaunchAppsAtLogon` | also open Claude Desktop and ChatGPT at logon, already running with `TZ` (default: off) |
+| `-RestartAppsNow` | restart running apps that have a different `TZ` |
+
+Run `install.ps1` again at any time to change any of these; it replaces the previous registration.
+
+Everyday commands:
 
 ```powershell
-.\install.ps1 -TimeZone Asia/Tokyo -RestartAppsNow
-```
-
-Check what is going on:
-
-```powershell
-.\status.ps1
-```
-
-Remove everything:
-
-```powershell
-.\uninstall.ps1
+.\status.ps1      # tasks, watchdog, wanted vs. actual TZ per app
+.\start.ps1       # start the watchdog now
+.\stop.ps1        # stop it until next logon (or start.ps1)
+.\uninstall.ps1   # remove the tasks and stop the watchdog
 ```
 
 ## Configuration
@@ -64,17 +66,8 @@ Remove everything:
   "pollMs": 700,
   "maxAgeSeconds": 20,
   "apps": [
-    { "name": "claude.exe",  "pathLike": "*\\WindowsApps\\Claude_*\\app\\claude.exe" },
-    { "name": "ChatGPT.exe", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London" },
-    {
-      "name": "msedge.exe",
-      "pathLike": "*\\Microsoft\\Edge\\Application\\msedge.exe",
-      "timeZone": "none",
-      "args": ["--silent-debugger-extension-api"],
-      "closeGracefully": true,
-      "killIfNoWindow": true,
-      "noWindowArgs": ["--no-startup-window"]
-    }
+    { "name": "claude.exe",  "package": "Claude",       "pathLike": "*\\WindowsApps\\Claude_*\\app\\claude.exe" },
+    { "name": "ChatGPT.exe", "package": "OpenAI.Codex", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London" }
   ]
 }
 ```
@@ -82,18 +75,11 @@ Remove everything:
 - `timeZone` — default IANA zone for all apps.
 - `apps[].name` — process image name.
 - `apps[].pathLike` — wildcard on the executable path; keeps the watchdog away from unrelated processes with the same name (Claude Desktop, for example, also ships a `claude.exe` CLI) and survives package upgrades.
-- `apps[].timeZone` — optional per-app override; `"none"` disables `TZ` injection for that app (use with `args`).
-- `apps[].args` — command-line switches the process must carry; a main process missing any of them is relaunched with them appended.
-- `apps[].closeGracefully` — close the main window and wait up to 3 s before killing, so the app saves its session and does not offer to "restore pages" next time. Use for browsers; leave off for apps that hide to the tray on close.
-- `apps[].killIfNoWindow` — a process without a window (a browser kept alive in the background, startup boost) may be relaunched at any age; it holds no unsaved work.
-- `apps[].noWindowArgs` — appended when a windowless instance is relaunched, so it comes back without opening a window.
-- `maxAgeSeconds` — a process with a window older than this is never relaunched.
+- `apps[].timeZone` — optional per-app override.
+- `apps[].package` — Store/MSIX package name, used by `-LaunchAppsAtLogon` to find the executable. For a non-Store app give `apps[].exe` (full path) instead.
+- `maxAgeSeconds` — a process older than this is never relaunched.
 
-Any Electron app can be added. Non-Electron apps only benefit if they read `TZ` themselves (Node.js does; Python, .NET and Win32 do not).
-
-### Example: silence the extension-debugging bar in Edge
-
-Extensions that use `chrome.debugger` (time zone spoofers among them) make Edge and Chrome show "started debugging this browser" on every affected tab. The only way to hide it is the `--silent-debugger-extension-api` switch, which has to be on the browser's command line for every launch, including launches from links and from startup boost. The `msedge.exe` entry above does exactly that: an Edge started without the switch is closed gracefully within two seconds and reopened with it; a windowless background instance is replaced silently. The same works for Chrome with `chrome.exe` and its path.
+Other Electron apps work the same way. Non-Electron apps only benefit if they read `TZ` themselves (Node.js does; Python, .NET and Win32 do not).
 
 ## What it does not cover
 
@@ -108,7 +94,9 @@ Whether a web service actually uses the client time zone is up to the service.
 | `tz-injector.ps1` | the watchdog, including a small C# helper that reads another process's environment |
 | `install.ps1` | validate zone, write config, register and start the task |
 | `status.ps1` | show task state, wanted vs. actual `TZ` of each app |
-| `uninstall.ps1` | remove task, stop watchdog |
+| `start.ps1` / `stop.ps1` | start or stop the watchdog without touching the registration |
+| `launch-apps.ps1` | open the configured apps with `TZ`; used by `-LaunchAppsAtLogon` |
+| `uninstall.ps1` | remove tasks, stop watchdog |
 | `config.json` | zones and app list |
 | `watchdog.log` | written next to the scripts, truncated at 512 KB |
 
