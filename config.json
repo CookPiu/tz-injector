@@ -1,0 +1,16 @@
+{
+  "timeZone": "America/Los_Angeles",
+  "pollMs": 700,
+  "maxAgeSeconds": 20,
+  "apps": [
+    {
+      "name": "claude.exe",
+      "pathLike": "*\\WindowsApps\\Claude_*\\app\\claude.exe"
+    },
+    {
+      "name": "ChatGPT.exe",
+      "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe"
+    }
+  ]
+}
+
