@@ -2,6 +2,7 @@
   "timeZone": "America/Los_Angeles",
   "pollMs": 700,
   "maxAgeSeconds": 20,
+  "startupGraceSeconds": 180,
   "apps": [
     {
       "name": "claude.exe",

@@ -16,6 +16,8 @@
 
 同一应用每分钟最多接管 3 次，超过则暂停 5 分钟。唯一可见的影响是从其他入口首次启动时窗口闪一下，约一秒。`config.json` 改动后自动重新加载。
 
+Windows“登录后自动恢复上次打开的应用”拉起的应用比看门狗先启动，到看门狗第一次轮询时可能已经一分钟。它们没有未保存的工作，所以看门狗启动后的前 15 秒内年龄上限放宽为 `startupGraceSeconds`（180 秒）而不是 `maxAgeSeconds`。
+
 已在 Windows 11 上用 Microsoft Store 版 Claude Desktop（Electron 44）和 ChatGPT 验证。纯 Chromium 浏览器（Edge、Chrome）不认 `TZ`，那种场景要用 `chrome.debugger` 扩展。
 
 ## 要求

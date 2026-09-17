@@ -46,6 +46,7 @@ function Read-Config {
   if (-not $c.apps -or $c.apps.Count -eq 0) { throw 'config.json: "apps" must list at least one app' }
   if (-not $c.pollMs) { $c | Add-Member -NotePropertyName pollMs -NotePropertyValue 700 }
   if (-not $c.maxAgeSeconds) { $c | Add-Member -NotePropertyName maxAgeSeconds -NotePropertyValue 20 }
+  if (-not $c.startupGraceSeconds) { $c | Add-Member -NotePropertyName startupGraceSeconds -NotePropertyValue 180 }
   return $c
 }
 
@@ -144,6 +145,10 @@ $cfgStamp = (Get-Item -LiteralPath $ConfigPath).LastWriteTimeUtc
 $seen = @{}          # pid -> 'ok' | 'skip' | 'relaunched'
 $relaunches = @{}    # app name -> datetime[]
 $pausedUntil = @{}   # app name -> datetime
+# Apps restored by Windows at logon ("restart apps after sign-in") are already up to a minute old
+# by the time the watchdog's first poll runs; they hold no unsaved work, so during the first poll
+# the age limit is widened to startupGraceSeconds.
+$startupWindowEnd = (Get-Date).AddSeconds(15)
 Log ("watchdog started: TZ={0}, apps={1}" -f $cfg.timeZone, (($cfg.apps | ForEach-Object { $_.name + $(if ($_.timeZone) { "($($_.timeZone))" }) }) -join ', '))
 
 while ($true) {
@@ -178,10 +183,12 @@ while ($true) {
         $seen[$p.ProcessId] = 'skip'; continue
       }
       if ($tz -eq $wanted) { $seen[$p.ProcessId] = 'ok'; continue }
-      if ($age -gt $cfg.maxAgeSeconds) {
+      $limit = if ($now -lt $startupWindowEnd) { [Math]::Max($cfg.maxAgeSeconds, $cfg.startupGraceSeconds) } else { $cfg.maxAgeSeconds }
+      if ($age -gt $limit) {
         Log ("{0} pid {1} has TZ=[{2}] but is {3:N0} s old; left alone to protect unsaved work" -f $p.Name, $p.ProcessId, $tz, $age)
         $seen[$p.ProcessId] = 'skip'; continue
       }
+      if ($age -gt $cfg.maxAgeSeconds) { Log ("{0} pid {1} is {2:N0} s old but the watchdog has just started (logon restore); taking it over" -f $p.Name, $p.ProcessId, $age) }
       if ($pausedUntil.ContainsKey($p.Name) -and $now -lt $pausedUntil[$p.Name]) {
         $seen[$p.ProcessId] = 'skip'; continue
       }

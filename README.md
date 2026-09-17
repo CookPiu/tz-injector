@@ -18,6 +18,8 @@ The watchdog polls the main process of each configured app (the one without a `-
 
 At most 3 relaunches per app per minute; after that the app is left alone for 5 minutes. The only visible effect is a short flicker (about one second) the first time an app is launched by other means. `config.json` is reloaded automatically when it changes.
 
+Apps that Windows restores at sign-in ("automatically save my restartable apps and restart them when I sign back in") come up before the watchdog and can be a minute old by its first poll. They hold no unsaved work, so during the first 15 seconds after the watchdog starts the age limit is `startupGraceSeconds` (180) instead of `maxAgeSeconds`.
+
 Verified on Windows 11 with the Microsoft Store builds of Claude Desktop (Electron 44) and ChatGPT. Plain Chromium browsers (Edge, Chrome) ignore `TZ`; for those use a `chrome.debugger` extension instead.
 
 ## Requirements
