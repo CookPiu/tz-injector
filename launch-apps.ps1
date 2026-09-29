@@ -17,17 +17,23 @@ function Resolve-AppExe($app) {
   return $null
 }
 
+# "PackageFamilyName!AppId" of the Store/MSIX app whose entry point is $exe, $null for other apps
+function Get-AppUserModelId($app, [string]$exe) {
+  if (-not $app.package) { return $null }
+  $pkg = Get-AppxPackage -Name $app.package -ErrorAction SilentlyContinue | Sort-Object { [Version]$_.Version } -Descending | Select-Object -First 1
+  if (-not $pkg) { return $null }
+  $entry = (Get-AppxPackageManifest $pkg).Package.Applications.Application |
+    Where-Object { (Join-Path $pkg.InstallLocation ($_.Executable -replace '/', '\')) -ieq $exe } | Select-Object -First 1
+  if ($entry) { return "$($pkg.PackageFamilyName)!$($entry.Id)" }
+  return $null
+}
+
 foreach ($app in $cfg.apps) {
   $running = Get-CimInstance Win32_Process -Filter "Name='$($app.name)'" | Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ExecutablePath -like $app.pathLike }
   if ($running) { Write-Host "$($app.name): already running"; continue }
   $exe = Resolve-AppExe $app
   if (-not $exe) { Write-Warning "$($app.name): executable not found (set 'package' or 'exe' in config.json)"; continue }
   $tz = if ($app.timeZone) { $app.timeZone } else { $cfg.timeZone }
-  $si = New-Object System.Diagnostics.ProcessStartInfo
-  $si.FileName = $exe
-  $si.WorkingDirectory = Split-Path -Parent $exe
-  $si.UseShellExecute = $false
-  $si.EnvironmentVariables['TZ'] = $tz
-  [System.Diagnostics.Process]::Start($si) | Out-Null
+  & (Join-Path $here 'start-app.ps1') -Exe $exe -TimeZone $tz -AppUserModelId (Get-AppUserModelId $app $exe) | Out-Null
   Write-Host "$($app.name): started with TZ=$tz"
 }

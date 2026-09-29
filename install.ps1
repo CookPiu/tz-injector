@@ -106,16 +106,18 @@ if ($LaunchAppsAtLogon) { Write-Host "Task '$launchTaskName' registered: configu
 Write-Host "Log: $(Join-Path $here 'watchdog.log')"
 
 if ($RestartAppsNow) {
+  # ProcEnv.GetAumid lives in tz-injector.ps1 (loaded the same way as in status.ps1)
+  $src = Get-Content -LiteralPath (Join-Path $here 'tz-injector.ps1') -Raw
+  $cs = [regex]::Match($src, "Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@", 'Singleline').Groups[1].Value
+  if (-not ('ProcEnv' -as [type])) { Add-Type -TypeDefinition $cs }
   foreach ($app in $cfg.apps) {
     $wanted = if ($app.timeZone) { $app.timeZone } else { $cfg.timeZone }
     $mains = Get-CimInstance Win32_Process -Filter "Name='$($app.name)'" | Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ExecutablePath -like $app.pathLike }
     foreach ($m in $mains) {
+      $aumid = [ProcEnv]::GetAumid([int]$m.ProcessId)
       & "$([Environment]::SystemDirectory)\taskkill.exe" /PID $m.ProcessId /T /F 2>&1 | Out-Null
       Start-Sleep 1
-      $si = New-Object System.Diagnostics.ProcessStartInfo
-      $si.FileName = $m.ExecutablePath; $si.WorkingDirectory = Split-Path $m.ExecutablePath; $si.UseShellExecute = $false
-      $si.EnvironmentVariables['TZ'] = $wanted
-      [System.Diagnostics.Process]::Start($si) | Out-Null
+      & (Join-Path $here 'start-app.ps1') -Exe $m.ExecutablePath -TimeZone $wanted -AppUserModelId $aumid | Out-Null
       Write-Host "Restarted $($app.name) with TZ=$wanted"
     }
   }

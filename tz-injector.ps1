@@ -8,7 +8,8 @@
   block (PEB -> RTL_USER_PROCESS_PARAMETERS -> Environment):
     - TZ already equals the wanted zone: leave it alone.
     - TZ missing or different and the process is younger than maxAgeSeconds: kill the process tree
-      and start the app again with the original command-line arguments plus TZ.
+      and start the app again with the original command-line arguments plus TZ. A packaged (MSIX)
+      app is started inside its package container so it keeps its package identity (start-app.ps1).
     - TZ missing or different but the process is older: log only. An app that was already running
       is never killed.
   Per app at most 3 relaunches per 60 s; above that the app is left alone for 5 minutes.
@@ -90,6 +91,14 @@ public static class ProcEnv {
       return null;
     } finally { CloseHandle(h); }
   }
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern int GetApplicationUserModelId(IntPtr h, ref int len, StringBuilder id);
+  // Returns "PackageFamilyName!AppId" for a packaged process, null for an unpackaged one.
+  public static string GetAumid(int pid) {
+    IntPtr h = OpenProcess(0x1000, false, pid);
+    if (h == IntPtr.Zero) return null;
+    try { int len = 512; var sb = new StringBuilder(len); return GetApplicationUserModelId(h, ref len, sb) == 0 ? sb.ToString() : null; }
+    finally { CloseHandle(h); }
+  }
 }
 '@
 
@@ -128,16 +137,12 @@ function Get-MainProcesses($cfg) {
 function Relaunch($proc, [string]$tz) {
   $args = Get-ArgsFromCommandLine $proc.CommandLine
   $exe = $proc.ExecutablePath
+  $aumid = [ProcEnv]::GetAumid([int]$proc.ProcessId)
   & $taskkill /PID $proc.ProcessId /T /F 2>&1 | Out-Null
   Start-Sleep -Milliseconds 800
-  $si = New-Object System.Diagnostics.ProcessStartInfo
-  $si.FileName = $exe
-  $si.WorkingDirectory = Split-Path -Parent $exe
-  $si.UseShellExecute = $false
-  $si.Arguments = $args
-  $si.EnvironmentVariables['TZ'] = $tz
-  $np = [System.Diagnostics.Process]::Start($si)
-  Log ("relaunched {0}: pid {1} -> {2}, args [{3}], TZ={4}" -f $proc.Name, $proc.ProcessId, $np.Id, $args, $tz)
+  # a packaged app is started inside its package container so it keeps its package identity
+  $started = & (Join-Path $PSScriptRoot 'start-app.ps1') -Exe $exe -Arguments $args -TimeZone $tz -AppUserModelId $aumid
+  Log ("relaunched {0}: pid {1} -> {2}, args [{3}], TZ={4}" -f $proc.Name, $proc.ProcessId, $started, $args, $tz)
 }
 
 $cfg = Read-Config

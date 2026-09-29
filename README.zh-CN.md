@@ -2,7 +2,7 @@
 
 让 Windows 上的 Claude Desktop 和 ChatGPT 以你选择的时区运行，不修改系统时区。
 
-这是一个 Windows 10/11 上的 PowerShell 看门狗。它保证这两个应用无论从哪里启动（开始菜单、任务栏、Store 磁贴、`claude://` 之类的协议链接、登录后自动恢复的应用）都带着进程级 `TZ` 环境变量。两者都是 Electron 应用，Electron 会把 `TZ` 应用到主进程和全部渲染进程，页面里的 `Intl.DateTimeFormat`、`Date` 读到的就是你指定的时区，而 Windows 其余部分保持真实时区。其他 Electron 应用也可以加进配置。
+这是一个 Windows 10/11 上的 PowerShell 看门狗。它保证这两个应用无论从哪里启动（开始菜单、任务栏、Store 磁贴、`claude://` 之类的协议链接、登录后自动恢复的应用）都带着进程级 `TZ` 环境变量。Claude Desktop 是 Electron 应用，Electron 会把 `TZ` 应用到主进程和全部渲染进程；ChatGPT 的 Electron 应用跑在 owl 上，这是一个基于 Chromium 154 的运行时，它的渲染进程同样认 `TZ`。页面里的 `Intl.DateTimeFormat`、`Date` 读到的就是你指定的时区，而 Windows 其余部分保持真实时区。其他 Electron 应用也可以加进配置。
 
 ## 原理
 
@@ -16,14 +16,17 @@
 
 同一应用每分钟最多接管 3 次，超过则暂停 5 分钟。唯一可见的影响是从其他入口首次启动时窗口闪一下，约一秒。`config.json` 改动后自动重新加载。
 
+Store/MSIX 应用会在它自己的包容器里重启。按路径直接启动包里的 exe 得到的进程没有包身份，而 ChatGPT 26.924 起没有包身份就拒绝启动（“ChatGPT failed to start. 该进程没有程序包标识符。”）。所以看门狗在结束旧进程之前先读出它的应用用户模型 ID（例如 `OpenAI.Codex_2p2nqsd0c76g0!App`），再由 `start-app.ps1` 通过 `Invoke-CommandInDesktopPackage -PreventBreakaway` 在容器里运行 `launch-with-tz.vbs`，由它设置 `TZ` 并启动 exe。`-LaunchAppsAtLogon` 和 `-RestartAppsNow` 也按同样方式启动。没有包身份的应用仍直接启动。
+
 Windows“登录后自动恢复上次打开的应用”拉起的应用比看门狗先启动，到看门狗第一次轮询时可能已经一分钟。它们没有未保存的工作，所以看门狗启动后的前 15 秒内年龄上限放宽为 `startupGraceSeconds`（180 秒）而不是 `maxAgeSeconds`。
 
-已在 Windows 11 上用 Microsoft Store 版 Claude Desktop（Electron 44）和 ChatGPT 验证。纯 Chromium 浏览器（Edge、Chrome）不认 `TZ`，那种场景要用 `chrome.debugger` 扩展。
+已在 Windows 11 上用 Microsoft Store 版 Claude Desktop（Electron 44）和 ChatGPT（26.924.2738.0）验证。纯 Chromium 浏览器（Edge、Chrome）不认 `TZ`，那种场景要用 `chrome.debugger` 扩展。
 
 ## 要求
 
 - Windows 10/11 x64
 - [PowerShell 7](https://aka.ms/powershell)（`pwsh`）
+- Windows PowerShell 5.1（Windows 自带），用于 `Invoke-CommandInDesktopPackage`
 - 不需要管理员权限
 
 ## 安装
@@ -76,7 +79,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -TimeZone America/Lo
 - `apps[].name`：进程映像名。
 - `apps[].pathLike`：可执行文件路径通配，避免误伤同名进程（Claude Desktop 自带的 CLI 也叫 `claude.exe`），包升级后路径变化也不受影响。
 - `apps[].timeZone`：可选，按应用单独指定。
-- `apps[].package`：Store/MSIX 包名，`-LaunchAppsAtLogon` 用它定位可执行文件。非 Store 应用改为给 `apps[].exe`（完整路径）。
+- `apps[].package`：Store/MSIX 包名，`-LaunchAppsAtLogon` 用它定位可执行文件及其应用 ID。非 Store 应用改为给 `apps[].exe`（完整路径）。
 - `maxAgeSeconds`：运行超过这个秒数的进程绝不重启。
 
 其他 Electron 应用同样适用。非 Electron 应用只有自己读 `TZ` 的才有效（Node.js 认，Python、.NET、Win32 不认）。
@@ -91,7 +94,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -TimeZone America/Lo
 
 | 文件 | 用途 |
 | --- | --- |
-| `tz-injector.ps1` | 看门狗本体，含读取其他进程环境块的 C# 辅助类 |
+| `tz-injector.ps1` | 看门狗本体，含读取其他进程环境块和应用 ID 的 C# 辅助类 |
+| `start-app.ps1` | 带 `TZ` 启动应用，打包应用在其包容器内启动 |
+| `launch-with-tz.vbs` | 由 `start-app.ps1` 在包容器内运行：设置 `TZ` 并启动 exe，不弹控制台窗口 |
 | `install.ps1` | 校验时区、写配置、注册并启动任务 |
 | `status.ps1` | 显示任务状态、各应用期望与实际的 `TZ` |
 | `start.ps1` / `stop.ps1` | 启动或停止看门狗，不改注册 |

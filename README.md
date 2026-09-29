@@ -2,7 +2,7 @@
 
 Run Claude Desktop and ChatGPT for Windows in a time zone of your choice, without changing the system time zone.
 
-`tz-injector` is a small PowerShell watchdog for Windows 10/11. It makes sure the two apps always start with a process-level `TZ` environment variable, no matter how they are launched: Start menu, taskbar, Store tile, protocol links (`claude://`, ...) or "restart apps after sign-in". Both are Electron apps, and Electron applies `TZ` to its main process and to every renderer, so the pages inside them see the chosen zone in `Intl.DateTimeFormat`, `Date` and everything built on them, while the rest of Windows keeps the real time zone. Any other Electron app can be added to the configuration.
+`tz-injector` is a small PowerShell watchdog for Windows 10/11. It makes sure the two apps always start with a process-level `TZ` environment variable, no matter how they are launched: Start menu, taskbar, Store tile, protocol links (`claude://`, ...) or "restart apps after sign-in". Claude Desktop is an Electron app, and Electron applies `TZ` to its main process and to every renderer; ChatGPT runs its Electron app on owl, a Chromium 154 based runtime whose renderers apply `TZ` as well. The pages inside them see the chosen zone in `Intl.DateTimeFormat`, `Date` and everything built on them, while the rest of Windows keeps the real time zone. Any other Electron app can be added to the configuration.
 
 [中文说明](README.zh-CN.md)
 
@@ -18,14 +18,17 @@ The watchdog polls the main process of each configured app (the one without a `-
 
 At most 3 relaunches per app per minute; after that the app is left alone for 5 minutes. The only visible effect is a short flicker (about one second) the first time an app is launched by other means. `config.json` is reloaded automatically when it changes.
 
+Store/MSIX apps are relaunched inside their package container. Starting a packaged exe by its path gives a process without package identity, and ChatGPT 26.924 and later refuse to start without it ("ChatGPT failed to start. The process has no package identity."). So before killing the old process the watchdog reads its Application User Model ID (for example `OpenAI.Codex_2p2nqsd0c76g0!App`), and `start-app.ps1` starts the app through `Invoke-CommandInDesktopPackage -PreventBreakaway`, which runs `launch-with-tz.vbs` inside the container to set `TZ` and start the exe. `-LaunchAppsAtLogon` and `-RestartAppsNow` start apps the same way. Apps without package identity are started directly.
+
 Apps that Windows restores at sign-in ("automatically save my restartable apps and restart them when I sign back in") come up before the watchdog and can be a minute old by its first poll. They hold no unsaved work, so during the first 15 seconds after the watchdog starts the age limit is `startupGraceSeconds` (180) instead of `maxAgeSeconds`.
 
-Verified on Windows 11 with the Microsoft Store builds of Claude Desktop (Electron 44) and ChatGPT. Plain Chromium browsers (Edge, Chrome) ignore `TZ`; for those use a `chrome.debugger` extension instead.
+Verified on Windows 11 with the Microsoft Store builds of Claude Desktop (Electron 44) and ChatGPT (26.924.2738.0). Plain Chromium browsers (Edge, Chrome) ignore `TZ`; for those use a `chrome.debugger` extension instead.
 
 ## Requirements
 
 - Windows 10/11 x64
 - [PowerShell 7](https://aka.ms/powershell) (`pwsh`)
+- Windows PowerShell 5.1 (built into Windows), for `Invoke-CommandInDesktopPackage`
 - no administrator rights
 
 ## Install
@@ -78,7 +81,7 @@ Everyday commands:
 - `apps[].name` — process image name.
 - `apps[].pathLike` — wildcard on the executable path; keeps the watchdog away from unrelated processes with the same name (Claude Desktop, for example, also ships a `claude.exe` CLI) and survives package upgrades.
 - `apps[].timeZone` — optional per-app override.
-- `apps[].package` — Store/MSIX package name, used by `-LaunchAppsAtLogon` to find the executable. For a non-Store app give `apps[].exe` (full path) instead.
+- `apps[].package` — Store/MSIX package name, used by `-LaunchAppsAtLogon` to find the executable and its application ID. For a non-Store app give `apps[].exe` (full path) instead.
 - `maxAgeSeconds` — a process older than this is never relaunched.
 
 Other Electron apps work the same way. Non-Electron apps only benefit if they read `TZ` themselves (Node.js does; Python, .NET and Win32 do not).
@@ -93,7 +96,9 @@ Whether a web service actually uses the client time zone is up to the service.
 
 | File | Purpose |
 | --- | --- |
-| `tz-injector.ps1` | the watchdog, including a small C# helper that reads another process's environment |
+| `tz-injector.ps1` | the watchdog, including a small C# helper that reads another process's environment and application ID |
+| `start-app.ps1` | start an app with `TZ`; packaged apps inside their package container |
+| `launch-with-tz.vbs` | run by `start-app.ps1` inside the package container: sets `TZ` and starts the exe without a console window |
 | `install.ps1` | validate zone, write config, register and start the task |
 | `status.ps1` | show task state, wanted vs. actual `TZ` of each app |
 | `start.ps1` / `stop.ps1` | start or stop the watchdog without touching the registration |
