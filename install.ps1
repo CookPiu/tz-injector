@@ -117,7 +117,7 @@ if ($RestartAppsNow) {
       $aumid = [ProcEnv]::GetAumid([int]$m.ProcessId)
       & "$([Environment]::SystemDirectory)\taskkill.exe" /PID $m.ProcessId /T /F 2>&1 | Out-Null
       Start-Sleep 1
-      & (Join-Path $here 'start-app.ps1') -Exe $m.ExecutablePath -TimeZone $wanted -AppUserModelId $aumid | Out-Null
+      & (Join-Path $here 'start-app.ps1') -Exe $m.ExecutablePath -ExtraArgs @($app.args | Where-Object { $_ }) -TimeZone $wanted -AppUserModelId $aumid | Out-Null
       Write-Host "Restarted $($app.name) with TZ=$wanted"
     }
   }

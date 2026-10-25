@@ -9,6 +9,8 @@
   Invoke-CommandInDesktopPackage does not pass the caller's environment on, so it runs
   launch-with-tz.vbs, which sets TZ and starts the exe; -PreventBreakaway keeps that child inside the
   container. Without -AppUserModelId the exe is started directly with TZ.
+  -ExtraArgs (config.json "args") are appended to -Arguments, except switches the arguments already
+  carry under the same name, so a value given on the original command line wins.
   Returns "pid <n>" for a direct start and "package <AUMID>" for a packaged start.
 #>
 [CmdletBinding()]
@@ -16,9 +18,16 @@ param(
   [Parameter(Mandatory)][string]$Exe,
   [string]$Arguments = '',
   [Parameter(Mandatory)][string]$TimeZone,
-  [string]$AppUserModelId
+  [string]$AppUserModelId,
+  [string[]]$ExtraArgs = @()
 )
 $ErrorActionPreference = 'Stop'
+
+# switch name is the part before '=' ("--proxy-server" for "--proxy-server=http://127.0.0.1:10808")
+$missing = @($ExtraArgs | Where-Object {
+  $_ -and $Arguments -notmatch ('(^|\s)"?' + [regex]::Escape(($_ -split '=', 2)[0]) + '(=|"|\s|$)')
+})
+if ($missing.Count) { $Arguments = (@($Arguments, ($missing -join ' ')) | Where-Object { $_ }) -join ' ' }
 
 if ($AppUserModelId -and $AppUserModelId.Contains('!')) {
   $pfn, $appId = $AppUserModelId.Split('!', 2)

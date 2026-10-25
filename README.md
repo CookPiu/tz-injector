@@ -13,7 +13,7 @@ The watchdog polls the main process of each configured app (the one without a `-
 | Main process found | Action |
 | --- | --- |
 | already has the wanted `TZ` | nothing |
-| wrong or missing `TZ`, younger than 20 s | kill the process tree, start the app again with the original command-line arguments plus `TZ` |
+| wrong or missing `TZ`, younger than 20 s | kill the process tree, start the app again with the original command-line arguments, the app's `args` and `TZ` |
 | wrong or missing `TZ`, older than 20 s | log only; an app that was already running is never killed |
 
 At most 3 relaunches per app per minute; after that the app is left alone for 5 minutes. The only visible effect is a short flicker (about one second) the first time an app is launched by other means. `config.json` is reloaded automatically when it changes.
@@ -72,7 +72,8 @@ Everyday commands:
   "maxAgeSeconds": 20,
   "apps": [
     { "name": "claude.exe",  "package": "Claude",       "pathLike": "*\\WindowsApps\\Claude_*\\app\\claude.exe" },
-    { "name": "ChatGPT.exe", "package": "OpenAI.Codex", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London" }
+    { "name": "ChatGPT.exe", "package": "OpenAI.Codex", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London",
+      "args": [ "--proxy-server=http://127.0.0.1:10808" ] }
   ]
 }
 ```
@@ -81,6 +82,7 @@ Everyday commands:
 - `apps[].name` — process image name.
 - `apps[].pathLike` — wildcard on the executable path; keeps the watchdog away from unrelated processes with the same name (Claude Desktop, for example, also ships a `claude.exe` CLI) and survives package upgrades.
 - `apps[].timeZone` — optional per-app override.
+- `apps[].args` — optional command-line switches added whenever tz-injector starts the app (watchdog relaunch, `-LaunchAppsAtLogon`, `-RestartAppsNow`). A switch the original command line already has under the same name, with any value, is not added again. A process that already has the wanted `TZ` is not relaunched just because a switch is missing. Example: `--proxy-server=http://127.0.0.1:10808` for ChatGPT, whose requests for the profile and usage pages bypass the system proxy.
 - `apps[].package` — Store/MSIX package name, used by `-LaunchAppsAtLogon` to find the executable and its application ID. For a non-Store app give `apps[].exe` (full path) instead.
 - `maxAgeSeconds` — a process older than this is never relaunched.
 

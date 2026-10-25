@@ -8,7 +8,8 @@
   block (PEB -> RTL_USER_PROCESS_PARAMETERS -> Environment):
     - TZ already equals the wanted zone: leave it alone.
     - TZ missing or different and the process is younger than maxAgeSeconds: kill the process tree
-      and start the app again with the original command-line arguments plus TZ. A packaged (MSIX)
+      and start the app again with the original command-line arguments, the app's "args" from
+      config.json, and TZ. A packaged (MSIX)
       app is started inside its package container so it keeps its package identity (start-app.ps1).
     - TZ missing or different but the process is older: log only. An app that was already running
       is never killed.
@@ -134,15 +135,15 @@ function Get-MainProcesses($cfg) {
   }
 }
 
-function Relaunch($proc, [string]$tz) {
+function Relaunch($proc, [string]$tz, [string[]]$extraArgs) {
   $args = Get-ArgsFromCommandLine $proc.CommandLine
   $exe = $proc.ExecutablePath
   $aumid = [ProcEnv]::GetAumid([int]$proc.ProcessId)
   & $taskkill /PID $proc.ProcessId /T /F 2>&1 | Out-Null
   Start-Sleep -Milliseconds 800
   # a packaged app is started inside its package container so it keeps its package identity
-  $started = & (Join-Path $PSScriptRoot 'start-app.ps1') -Exe $exe -Arguments $args -TimeZone $tz -AppUserModelId $aumid
-  Log ("relaunched {0}: pid {1} -> {2}, args [{3}], TZ={4}" -f $proc.Name, $proc.ProcessId, $started, $args, $tz)
+  $started = & (Join-Path $PSScriptRoot 'start-app.ps1') -Exe $exe -Arguments $args -ExtraArgs $extraArgs -TimeZone $tz -AppUserModelId $aumid
+  Log ("relaunched {0}: pid {1} -> {2}, args [{3}], extra args [{4}], TZ={5}" -f $proc.Name, $proc.ProcessId, $started, $args, ($extraArgs -join ' '), $tz)
 }
 
 $cfg = Read-Config
@@ -154,7 +155,7 @@ $pausedUntil = @{}   # app name -> datetime
 # by the time the watchdog's first poll runs; they hold no unsaved work, so during the first poll
 # the age limit is widened to startupGraceSeconds.
 $startupWindowEnd = (Get-Date).AddSeconds(15)
-Log ("watchdog started: TZ={0}, apps={1}" -f $cfg.timeZone, (($cfg.apps | ForEach-Object { $_.name + $(if ($_.timeZone) { "($($_.timeZone))" }) }) -join ', '))
+Log ("watchdog started: TZ={0}, apps={1}" -f $cfg.timeZone, (($cfg.apps | ForEach-Object { $_.name + $(if ($_.timeZone) { "($($_.timeZone))" }) + $(if ($_.args) { "(args=$($_.args -join ' '))" }) }) -join ', '))
 
 while ($true) {
   try {
@@ -205,7 +206,7 @@ while ($true) {
       }
       $seen[$p.ProcessId] = 'relaunched'
       $relaunches[$p.Name] = $hist + $now
-      try { Relaunch $p $wanted } catch { Log ("relaunch of {0} failed: {1}" -f $p.Name, $_.Exception.Message) }
+      try { Relaunch $p $wanted @($app.args | Where-Object { $_ }) } catch { Log ("relaunch of {0} failed: {1}" -f $p.Name, $_.Exception.Message) }
     }
     foreach ($k in @($seen.Keys)) { if (-not $alive.ContainsKey($k)) { $seen.Remove($k) } }
   } catch {

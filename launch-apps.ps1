@@ -34,6 +34,6 @@ foreach ($app in $cfg.apps) {
   $exe = Resolve-AppExe $app
   if (-not $exe) { Write-Warning "$($app.name): executable not found (set 'package' or 'exe' in config.json)"; continue }
   $tz = if ($app.timeZone) { $app.timeZone } else { $cfg.timeZone }
-  & (Join-Path $here 'start-app.ps1') -Exe $exe -TimeZone $tz -AppUserModelId (Get-AppUserModelId $app $exe) | Out-Null
+  & (Join-Path $here 'start-app.ps1') -Exe $exe -ExtraArgs @($app.args | Where-Object { $_ }) -TimeZone $tz -AppUserModelId (Get-AppUserModelId $app $exe) | Out-Null
   Write-Host "$($app.name): started with TZ=$tz"
 }

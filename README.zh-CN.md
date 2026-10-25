@@ -11,7 +11,7 @@
 | 发现的主进程 | 处理 |
 | --- | --- |
 | 已带正确的 `TZ` | 不动 |
-| `TZ` 缺失或不符，且启动不到 20 秒 | 结束整棵进程树，用原始命令行参数加 `TZ` 重新启动 |
+| `TZ` 缺失或不符，且启动不到 20 秒 | 结束整棵进程树，用原始命令行参数、该应用的 `args` 和 `TZ` 重新启动 |
 | `TZ` 缺失或不符，但已运行超过 20 秒 | 只写日志，绝不结束已经在用的应用 |
 
 同一应用每分钟最多接管 3 次，超过则暂停 5 分钟。唯一可见的影响是从其他入口首次启动时窗口闪一下，约一秒。`config.json` 改动后自动重新加载。
@@ -70,7 +70,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -TimeZone America/Lo
   "maxAgeSeconds": 20,
   "apps": [
     { "name": "claude.exe",  "package": "Claude",       "pathLike": "*\\WindowsApps\\Claude_*\\app\\claude.exe" },
-    { "name": "ChatGPT.exe", "package": "OpenAI.Codex", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London" }
+    { "name": "ChatGPT.exe", "package": "OpenAI.Codex", "pathLike": "*\\WindowsApps\\OpenAI.Codex_*\\app\\ChatGPT.exe", "timeZone": "Europe/London",
+      "args": [ "--proxy-server=http://127.0.0.1:10808" ] }
   ]
 }
 ```
@@ -79,6 +80,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -TimeZone America/Lo
 - `apps[].name`：进程映像名。
 - `apps[].pathLike`：可执行文件路径通配，避免误伤同名进程（Claude Desktop 自带的 CLI 也叫 `claude.exe`），包升级后路径变化也不受影响。
 - `apps[].timeZone`：可选，按应用单独指定。
+- `apps[].args`：可选，tz-injector 每次启动该应用时追加的命令行开关（看门狗重启、`-LaunchAppsAtLogon`、`-RestartAppsNow`）。原命令行里已有同名开关时，无论值是什么都不再追加。已带正确 `TZ` 的进程不会仅因缺少开关而被重启。例如 ChatGPT 的个人资料、用量等请求不走系统代理，可以给它配 `--proxy-server=http://127.0.0.1:10808`。
 - `apps[].package`：Store/MSIX 包名，`-LaunchAppsAtLogon` 用它定位可执行文件及其应用 ID。非 Store 应用改为给 `apps[].exe`（完整路径）。
 - `maxAgeSeconds`：运行超过这个秒数的进程绝不重启。
 
